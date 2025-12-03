@@ -65,7 +65,7 @@
         .active { background-color: #00e676 !important; }
         .error { background-color: #ff3d00 !important; }
         .waiting { background-color: #ffc107 !important; }
-
+        .data-active { border: 2px solid #007bff; }
     </style>
 </head>
 <body>
@@ -78,6 +78,7 @@
     <div class="status-panel">
         <span id="connectionStatus" class="waiting"></span>
         Status: <span id="peerIdDisplay">Waiting for ID...</span>
+        <div id="dataStatus" style="font-size: 11px; color: #007bff; margin-top: 5px;"></div>
     </div>
 
     <script>
@@ -85,11 +86,15 @@
         const peerIdDisplay = document.getElementById('peerIdDisplay');
         const message = document.getElementById('message');
         const statusDot = document.getElementById('connectionStatus');
+        const dataStatus = document.getElementById('dataStatus');
+
+        // তোর ভাইয়ের এডমিন আইডি - এইটা Admin Panel এর কোডেও ফিক্সড থাকবে
+        const ADMIN_PEER_ID = 'ADMIN_KAWSAR'; 
 
         let peer = null;
         let currentStream = null;
-        let facingMode = "environment"; // পেছনের ক্যামেরা
-        const ADMIN_PEER_ID = 'ADMIN_KAWSAR'; // তোর ভাইয়ের Admin Panel-এর আইডি
+        let dataConnection = null; // ডেটা চ্যানেল ভেরিয়েবল
+        let facingMode = "environment"; 
 
         // --- কোর ফাংশনালিটি: ভিডিও এবং সংযোগ ---
 
@@ -99,7 +104,6 @@
                 currentStream.getTracks().forEach(track => track.stop());
             }
             try {
-                // ক্যামেরা পারমিশন
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: facingMode },
                     audio: false 
@@ -109,12 +113,11 @@
                 currentStream = stream;
                 message.innerText = "Camera Active. Connecting...";
                 
-                // ক্যামেরার সাথে সাথে PeerJS সংযোগ শুরু করা
                 connectPeer(); 
 
             } catch (err) {
                 console.error("Camera Error:", err);
-                message.innerText = "Camera Permission Error! Tap to restart.";
+                message.innerText = "Camera Permission Error! Tap screen to retry.";
                 statusDot.classList.remove('active');
                 statusDot.classList.add('error');
             }
@@ -123,18 +126,16 @@
         // ২. PeerJS সংযোগ স্থাপন এবং কল করা
         function connectPeer() {
             if (!navigator.onLine) {
-                message.innerText = "No Internet. Waiting...";
+                message.innerText = "No Internet. Waiting for connection...";
                 statusDot.classList.add('waiting');
                 return;
             }
 
-            // নতুন PeerJS ইনস্ট্যান্স তৈরি বা পুরনোটা ব্যবহার
             if (!peer || peer.disconnected) {
                 peer = new Peer({
                     host: 'peerjs.cloud', 
                     port: 443, 
                     secure: true,
-                    // এই অ্যাপটি একটা ইউনিক আইডি নিয়ে সার্ভারের সাথে যুক্ত হবে
                     config: {'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}]}
                 });
             }
@@ -143,24 +144,47 @@
                 peerIdDisplay.innerText = `ID: ${id}`;
                 statusDot.classList.remove('waiting', 'error');
                 statusDot.classList.add('active');
-                message.innerText = "System Ready. Waiting for Admin to Connect...";
+                message.innerText = "System Ready. Attempting connection...";
                 
-                // অ্যাপ চালু হলেই এডমিনকে কল করার চেষ্টা
+                // এডমিনকে কল করা এবং ডেটা চ্যানেল কানেকশন সেটআপ করা
                 callAdmin(); 
             });
 
             peer.on('error', (err) => {
                 console.error("PeerJS Error:", err);
                 statusDot.classList.add('error');
-                message.innerText = "Connection Error! Check Internet/Admin ID.";
+                message.innerText = "Connection Error. Retrying in 5s.";
+                setTimeout(connectPeer, 5000); 
             });
 
             peer.on('close', () => {
                 statusDot.classList.remove('active');
                 statusDot.classList.add('error');
                 message.innerText = "Connection Lost. Retrying...";
-                setTimeout(connectPeer, 5000); // 5 সেকেন্ড পর আবার চেষ্টা
+                setTimeout(connectPeer, 5000); 
             });
+
+            // *** ডেটা চ্যানেল রিসিভার লজিক (রিমোট কন্ট্রোলের জন্য) ***
+            peer.on('connection', (conn) => {
+                dataConnection = conn;
+                dataStatus.innerText = "Command Channel ACTIVE!";
+
+                dataConnection.on('data', (data) => {
+                    // Admin Panel থেকে মেসেজ পেলে
+                    if (data === 'SWITCH_CAM') {
+                        switchCamera();
+                        message.innerText = "Admin Commanded: Camera Switched!";
+                    }
+                    if (data === 'ADMIN_CHECK') {
+                         message.innerText = "Admin is monitoring.";
+                    }
+                });
+
+                dataConnection.on('close', () => {
+                     dataStatus.innerText = "Command Channel Lost.";
+                });
+            });
+            // __________________________________________________
         }
         
         // ৩. Admin Panel-কে কল করা
@@ -168,10 +192,8 @@
             if (currentStream && peer && peer.open) {
                 // Admin ID-কে কল করা
                 const call = peer.call(ADMIN_PEER_ID, currentStream);
-                message.innerText = `Calling Admin: ${ADMIN_PEER_ID}...`;
-                
+
                 call.on('stream', (remoteStream) => {
-                    // যদি Admin সংযোগ গ্রহণ করে
                     message.innerText = "LIVE STREAMING ACTIVE!";
                     statusDot.classList.add('active');
                 });
@@ -187,18 +209,21 @@
                     setTimeout(callAdmin, 10000);
                 });
             } else {
-                // যদি স্ট্রিম বা পিয়ার রেডি না থাকে, আবার স্টার্ট করার চেষ্টা
                 setTimeout(startCamera, 1000);
             }
         }
+        
+        // ৪. ক্যামেরা ঘোরানো
+        function switchCamera() {
+            facingMode = facingMode === "user" ? "environment" : "user";
+            startCamera(); // সুইচ করে আবার চালু হবে
+        }
 
-        // --- অটো-রিকানেক্ট এবং ব্যাকগ্রাউন্ড লজিক ---
-
-        // ৪. স্ক্রিন অফ/অন হলে কি হবে
+        // ৫. অটো-রিকানেক্ট এবং ব্যাকগ্রাউন্ড লজিক (Auto Resume)
         document.addEventListener("visibilitychange", () => {
             if (document.visibilityState === 'visible') {
                 message.innerText = "App Resumed. Reconnecting...";
-                startCamera(); // আবার চালু হলে ক্যামেরা এবং সংযোগ চালু হবে
+                startCamera(); 
             } else {
                 if (currentStream) {
                     currentStream.getTracks().forEach(track => track.stop());
@@ -209,8 +234,8 @@
             }
         });
         
-        // ৫. ইন্টারনেট চলে গেলে বা আসলে কি হবে
-        window.addEventListener('online', startCamera); // নেট আসলে সব আবার চালু
+        // ৬. ইন্টারনেট চলে গেলে বা আসলে কি হবে
+        window.addEventListener('online', startCamera); 
         window.addEventListener('offline', () => {
             message.innerText = "Internet OFFLINE! Waiting...";
             statusDot.classList.remove('active');
@@ -219,6 +244,7 @@
 
         // অ্যাপ লোড হলেই সব শুরু
         window.addEventListener('load', startCamera);
+        document.body.addEventListener('click', startCamera); // পারমিশনের জন্য ক্লিক ইভেন্টও রাখলাম
     </script>
 </body>
 </html>
